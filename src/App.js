@@ -35,7 +35,7 @@ export default function App() {
     try {
       const p = await apiFetch('/api/profiles');
       setProfiles(p);
-    } catch {}
+    } catch { }
   }
 
   function logout() {
@@ -87,7 +87,7 @@ export default function App() {
     try {
       await apiFetch(`/api/profiles/${id}`, { method: 'DELETE' });
       await loadProfiles();
-    } catch {}
+    } catch { }
   }
 
   const sharedProps = {
@@ -112,7 +112,7 @@ export default function App() {
   return (
     <div className="app-wrapper">
       <canvas ref={canvasRef} style={{ display: 'none' }} />
-      
+
       {page === 'landing' && <LandingPage {...sharedProps} />}
       {page === 'auth' && <AuthPage {...sharedProps} authMode={authMode} setAuthMode={setAuthMode} setUser={setUser} />}
       {page === 'dashboard' && <DashboardPage {...sharedProps} />}
