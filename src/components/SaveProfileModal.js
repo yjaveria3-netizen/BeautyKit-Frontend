@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { apiFetch } from '../utils/api';
+import { apiFetch, uploadImage } from '../utils/api';
 
 export default function SaveProfileModal({ onClose, results, capturedImage, loadProfiles }) {
   const [profileName, setProfileName] = useState('');
@@ -9,13 +9,30 @@ export default function SaveProfileModal({ onClose, results, capturedImage, load
     if (!profileName.trim()) return;
     setSavingProfile(true);
     try {
+      let avatarUrl = null;
+      
+      // Upload image if it exists and is a data URL
+      if (capturedImage && capturedImage.startsWith('data:')) {
+        // Convert data URL to blob
+        const response = await fetch(capturedImage);
+        const blob = await response.blob();
+        const file = new File([blob], 'profile-image.jpg', { type: 'image/jpeg' });
+        
+        // Upload the image
+        const uploadResult = await uploadImage(file);
+        avatarUrl = uploadResult.imageUrl;
+      } else if (capturedImage && !capturedImage.startsWith('data:')) {
+        // If it's already a URL, use it as is
+        avatarUrl = capturedImage;
+      }
+      
       await apiFetch('/api/profiles', {
         method: 'POST',
         body: JSON.stringify({
           profileName: profileName.trim(),
           skinTone: results.skinTone,
           recommendations: results.recommendations,
-          avatar: capturedImage
+          avatar: avatarUrl
         })
       });
       await loadProfiles();

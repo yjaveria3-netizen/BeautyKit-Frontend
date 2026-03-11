@@ -28,9 +28,9 @@
 
 ## Overview
 
-BeauKit is a luxury, AI-driven beauty intelligence application. The frontend delivers a dark editorial experience that allows users to upload or capture a photo, extract their skin's unique undertone via pixel-level color science, and instantly receive a full personalized beauty profile across six curated categories — all previewed live on a custom SVG avatar.
+BeauKit is a luxury, AI-driven beauty intelligence application. The frontend delivers a dark editorial experience that allows users to upload or capture a photo, extract their skin's unique undertone via pixel-level color science, and instantly receive a full personalized beauty profile across seven curated categories — all previewed live on a custom SVG avatar.
 
-The application is a single-page React app built with a bespoke dark design system that blends editorial typography with glassmorphism, ambient lighting effects, and gold-accented UI components.
+The application features**ML-powered face makeup simulation**, **celebrity-inspired looks**, **interactive color tools**, and a **hybrid avatar system** that updates in real-time. Built with a bespoke dark design system that blends editorial typography with glassmorphism, ambient lighting effects, and gold-accented UI components.
 
 > **Note:** This repository covers the **frontend client only**. The backend REST API (Node/Express + database) lives in a separate `backend/` directory and must be running for analysis and authentication features to function.
 ---
@@ -48,12 +48,14 @@ The application is a single-page React app built with a bespoke dark design syst
 
 - **File Upload** — drag-and-drop or click to upload any photo
 - **Live Camera Capture** — real-time webcam feed with one-click photo capture
+- **Celebrity Reference Photos** — analyze from curated celebrity inspiration images
 - **Pixel Sampling Algorithm** — samples the central 40% of the image frame, filters for true skin-range RGB values, and computes the average undertone
+- **ML Processing** — advanced face detection and makeup simulation
 - Sends extracted `{ r, g, b }` values to the backend for AI classification
 
 ### Beauty Recommendations
 
-Six personalized categories are generated per analysis:
+Seven personalized categories are generated per analysis:
 
 | Category | Description |
 |---|---|
@@ -63,6 +65,7 @@ Six personalized categories are generated per analysis:
 | **Blush** | 6 matched shades with placement technique tips |
 | **Eyeshadow** | Custom 8-pan palette built for your undertone and eye shape |
 | **Hair Color** | 9 shades, styling directions, and salon treatment suggestions |
+| **Celebrity Looks** | Inspired matches from celebrity reference images |
 
 ### Live SVG Avatar
 
@@ -77,7 +80,21 @@ Six personalized categories are generated per analysis:
 - Delete profiles you no longer need
 - Each profile stores: skin tone data, all recommendations, and avatar capture
 
-### Landing / Marketing Pages
+### Interactive Color Tools
+
+- **Color Wheel** — explore full spectrum with precision picking
+- **Color Picker** — fine-tune any shade with RGB/HEX controls
+- **Celebrity Slider** — browse curated celebrity-inspired palettes
+- **Skin Tone Panel** — visualize your exact undertone + depth match
+
+### ML Face Makeup
+
+- **Real-time face tracking** via webcam
+- **Virtual makeup application** directly on user's live video feed
+- **Multiple makeup styles** from natural to glam
+- **Side-by-side comparison** with before/after views
+
+### Landing/ Marketing Pages
 
 - Hero section with animated avatar and stat counters
 - Features grid with six benefit cards and staggered animation
@@ -115,8 +132,8 @@ Six personalized categories are generated per analysis:
 **1. Clone the repository**
 
 ```sh
-git clone https://github.com/your-username/beautykit.git
-cd beautykit/frontend
+git clone https://github.com/beautykit/BeautyKit.git
+cd BeautyKit/frontend
 ```
 
 **2. Install dependencies**
@@ -162,7 +179,7 @@ frontend/
 └── package-lock.json
 ```
 
-> The app is currently structured as a **single-file component architecture** inside `App.js`, with all sub-components (Avatar, page views, modals) co-located. See the [Roadmap](#roadmap) section for plans to modularize.
+> The app is currently structured as a **single-file component architecture** inside `App.js`, with all sub-components (Avatar, page views, modals) co-located. Modern React applications typically split components into separate files for better maintainability. See the [Roadmap](#roadmap) section for plans to modularize.
 ---
 
 ## Design System
@@ -231,7 +248,7 @@ Base URL: http://localhost:5000  (or REACT_APP_API_URL)
 | `POST` | `/api/auth/signup` | No | Register a new user |
 | `POST` | `/api/auth/signin` | No | Sign in and receive JWT |
 | `GET` | `/api/auth/me` | Yes | Validate token and fetch user |
-| `POST` | `/api/analyze-pixels` | Yes | Submit `{r, g, b}` — receive full recommendations |
+| `POST` | `/api/analyze-pixels` | No | Submit `{r, g, b}` — receive full recommendations |
 | `GET` | `/api/profiles` | Yes | Fetch all saved profiles |
 | `POST` | `/api/profiles` | Yes | Save a new beauty profile |
 | `DELETE` | `/api/profiles/:id` | Yes | Delete a saved profile |
@@ -296,13 +313,25 @@ Run all commands from the `frontend/` directory:
 
 ## Roadmap
 
-- [ ] Modularize `App.js` into a `/components` and `/pages` folder structure
-- [ ] Add `REACT_APP_API_URL` env var support throughout (replace hardcoded `localhost:5000`)
-- [ ] Implement React Router for deep-linkable pages
-- [ ] Add loading skeletons for profile cards
-- [ ] Introduce a theming toggle (Dark / Light editorial modes)
-- [ ] Write unit tests with React Testing Library
+### ✅ Completed (v2.0)
+- [x] Modularized components into `/components` and `/pages` folders
+- [x] ML-powered face makeup simulation with real-time tracking
+- [x] Celebrity-inspired looks slider
+- [x] Interactive color wheel and picker tools
+- [x] Hybrid avatar system with live updates
+- [x] Skin tone panels with undertone visualization
+- [x] Hero illustrations and ambient background effects
+
+### 🚧 In Progress
+- [ ] React Router for deep-linkable pages
+- [ ] Loading skeletons for profile cards
+- [ ] Theming toggle (Dark / Light editorial modes)
+
+### 🔮 Future
+- [ ] Unit tests with React Testing Library
 - [ ] PWA support with offline caching of the last profile
+- [ ] Accessibility improvements (ARIA labels, keyboard navigation)
+- [ ] Performance optimizations for image processing
 
 ---
 

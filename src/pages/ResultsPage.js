@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import Ambient from '../components/Ambient';
 import HeroIllustration from '../components/HeroIllustration';
 import ColorWheel from '../components/ColorWheel';
@@ -6,7 +7,8 @@ import SkinTonePanel from '../components/SkinTonePanel';
 import SaveProfileModal from '../components/SaveProfileModal';
 import { CATEGORIES, SKIN_TONES } from '../data/constants';
 
-export default function ResultsPage({ user, setPage, setAuthMode, results, capturedImage, loadProfiles }) {
+export default function ResultsPage({ user, setAuthMode, results, capturedImage, loadProfiles }) {
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('jewelry');
   const [saveModalOpen, setSaveModalOpen] = useState(false);
   
@@ -72,7 +74,7 @@ export default function ResultsPage({ user, setPage, setAuthMode, results, captu
 
       <div className="results-nav">
         <div className="results-nav-left">
-          <button className="back-btn inline" onClick={() => setPage(user ? 'dashboard' : 'landing')}>← {user ? 'Dashboard' : 'Home'}</button>
+          <button className="back-btn inline" onClick={() => navigate(user ? '/dashboard' : '/')}>← {user ? 'Dashboard' : 'Home'}</button>
           <span className="nav-brand">Beauty Kit</span>
         </div>
         <div className="results-cat-nav">
@@ -85,7 +87,7 @@ export default function ResultsPage({ user, setPage, setAuthMode, results, captu
         </div>
         <div className="results-nav-right">
           {user && <button className="btn-primary small" onClick={() => setSaveModalOpen(true)}>💾 Save Profile</button>}
-          {!user && <button className="btn-outline small" onClick={() => { setAuthMode('signup'); setPage('auth'); }}>Sign Up to Save</button>}
+          {!user && <button className="btn-outline small" onClick={() => { setAuthMode('signup'); navigate('/auth'); }}>Sign Up to Save</button>}
         </div>
       </div>
 

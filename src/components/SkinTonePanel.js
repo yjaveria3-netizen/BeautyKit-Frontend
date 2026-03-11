@@ -1,8 +1,14 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { SKIN_TONES } from '../data/constants';
 
 export default function SkinTonePanel({ detectedHex, onSelect }) {
   const [activeTone, setActiveTone] = useState(null);
+
+  // Use useCallback to prevent infinite re-renders
+  const handleSelect = useCallback((tone) => {
+    setActiveTone(tone);
+    onSelect && onSelect(tone);
+  }, [onSelect]);
 
   useEffect(() => {
     if (!detectedHex || detectedHex.length < 7) return;
@@ -14,12 +20,12 @@ export default function SkinTonePanel({ detectedHex, onSelect }) {
       if (d < minDist) { minDist = d; closest = t; }
     });
     setActiveTone(closest);
-    onSelect && onSelect(closest);
-  }, [detectedHex, onSelect]);
+    handleSelect(closest);
+  }, [detectedHex, handleSelect]);
 
   function select(tone) {
     setActiveTone(tone);
-    onSelect && onSelect(tone);
+    handleSelect(tone);
   }
 
   return (

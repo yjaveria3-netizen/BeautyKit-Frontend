@@ -1,10 +1,12 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import Ambient from '../components/Ambient';
 import HeroIllustration from '../components/HeroIllustration';
 import { SKIN_TONES } from '../data/constants';
 
 
-export default function LandingPage({ setPage, setAuthMode }) {
+export default function LandingPage({ setAuthMode, user, logout }) {
+  const navigate = useNavigate();
   const carouselRef = useRef(null);
   const itemsRef = useRef([]);
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -94,8 +96,17 @@ export default function LandingPage({ setPage, setAuthMode }) {
       <nav className="nav">
         <span className="nav-brand">Beauty Kit</span>
         <div className="nav-actions">
-          <button className="btn-ghost" onClick={() => { setAuthMode('signin'); setPage('auth'); }}>Sign In</button>
-          <button className="btn-primary" onClick={() => { setAuthMode('signup'); setPage('auth'); }}>Get Started</button>
+          {user ? (
+            <>
+              <span className="nav-user">✦ {user.name}</span>
+              <button className="btn-ghost" onClick={logout}>Sign Out</button>
+            </>
+          ) : (
+            <>
+              <button className="btn-ghost" onClick={() => { setAuthMode('signin'); navigate('/auth'); }}>Sign In</button>
+              <button className="btn-primary" onClick={() => { setAuthMode('signup'); navigate('/auth'); }}>Get Started</button>
+            </>
+          )}
         </div>
       </nav>
 
@@ -107,8 +118,10 @@ export default function LandingPage({ setPage, setAuthMode }) {
             <h1 className="hero-headline">Discover the<br />Colors That<br /><em>Were Made</em><br />For You.</h1>
             <p className="hero-body">Beauty Kit reads your skin's unique undertone and depth, then builds a complete beauty profile — from metals that make you glow to the lip shade that turns heads.</p>
             <div className="hero-cta-row">
-              <button className="cta-pill" onClick={() => { setAuthMode('signup'); setPage('auth'); }}>Begin Your Analysis<span className="cta-arrow">→</span></button>
-              <button className="cta-ghost" onClick={() => setPage('scan')}>Try without account</button>
+              <button className="cta-pill" onClick={() => user ? navigate('/scan') : (() => { setAuthMode('signup'); navigate('/auth'); })}>
+                {user ? 'Start New Analysis' : 'Begin Your Analysis'}<span className="cta-arrow">→</span>
+              </button>
+              {!user && <button className="cta-ghost" onClick={() => navigate('/scan')}>Try without account</button>}
             </div>
             <div className="hero-stats">
               <div className="stat"><span className="stat-num">6</span><span className="stat-label">Beauty Categories</span></div>
@@ -340,10 +353,17 @@ export default function LandingPage({ setPage, setAuthMode }) {
         <div className="final-cta-inner">
           <div className="final-ornament">✦</div>
           <h2 className="final-headline">Your Most Flattering<br /><em>Colors Are Waiting.</em></h2>
-          <p className="final-body">Join Beauty Kit and build a beauty profile that's uniquely, scientifically yours. Free to start. No guesswork required.</p>
+          <p className="final-body">
+            {user 
+              ? 'Continue your beauty journey with personalized analysis and recommendations tailored just for you.' 
+              : 'Join Beauty Kit and build a beauty profile that\'s uniquely, scientifically yours. Free to start. No guesswork required.'
+            }
+          </p>
           <div className="final-btns">
-            <button className="cta-pill large" onClick={() => { setAuthMode('signup'); setPage('auth'); }}>Create Your Free Account<span className="cta-arrow">→</span></button>
-            <button className="cta-ghost" onClick={() => setPage('scan')}>Scan Without Signing Up</button>
+            <button className="cta-pill large" onClick={() => user ? navigate('/scan') : (() => { setAuthMode('signup'); navigate('/auth'); })}>
+              {user ? 'Start New Analysis' : 'Create Your Free Account'}<span className="cta-arrow">→</span>
+            </button>
+            {!user && <button className="cta-ghost" onClick={() => navigate('/scan')}>Scan Without Signing Up</button>}
           </div>
         </div>
         <footer className="site-footer">

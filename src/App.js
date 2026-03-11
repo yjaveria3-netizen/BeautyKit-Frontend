@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import './App.css';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import LandingPage from './pages/LandingPage';
 import AuthPage from './pages/AuthPage';
 import DashboardPage from './pages/DashboardPage';
@@ -10,32 +11,47 @@ import { getToken, removeToken, apiFetch } from './utils/api';
 import { extractSkinPixels } from './utils/imageProcessing';
 
 export default function App() {
-  const [page, setPage] = useState('landing');
   const [authMode, setAuthMode] = useState('signin');
   const [user, setUser] = useState(null);
   const [capturedImage, setCapturedImage] = useState(null);
   const [results, setResults] = useState(null);
   const [scanError, setScanError] = useState('');
   const [profiles, setProfiles] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
   const canvasRef = useRef();
 
   useEffect(() => {
     const token = getToken();
+    
     if (token) {
+      // Validate token by calling /api/auth/me
       apiFetch('/api/auth/me')
         .then(u => {
           setUser(u);
           loadProfiles();
         })
-        .catch(() => removeToken());
+        .catch(err => {
+          console.error('Token validation failed:', err);
+          removeToken();
+          setUser(null);
+          setProfiles([]);
+        })
+        .finally(() => {
+          setIsLoading(false);
+        });
+    } else {
+      setIsLoading(false);
     }
   }, []);
 
   async function loadProfiles() {
     try {
       const p = await apiFetch('/api/profiles');
-      setProfiles(p);
-    } catch { }
+      setProfiles(p || []);
+    } catch (err) {
+      console.error('Failed to load profiles:', err);
+      setProfiles([]);
+    }
   }
 
   function logout() {
@@ -44,11 +60,11 @@ export default function App() {
     setProfiles([]);
     setResults(null);
     setCapturedImage(null);
-    setPage('landing');
+    window.location.href = '/';
   }
 
-  async function analyzeImage(imageSrc) {
-    setPage('analyzing');
+  async function analyzeImage(imageSrc, navigate) {
+    navigate('/analyzing');
     try {
       const img = new Image();
       img.src = imageSrc;
@@ -66,20 +82,20 @@ export default function App() {
         body: JSON.stringify({ r, g, b })
       });
       setResults(data);
-      setPage('results');
+      navigate('/results');
     } catch (err) {
       setScanError('Analysis failed. Please try again.');
-      setPage('scan');
+      navigate('/scan');
     }
   }
 
-  function loadProfile(profile) {
+  function loadProfile(profile, navigate) {
     setResults({
       skinTone: profile.skinTone,
       recommendations: profile.recommendations
     });
     setCapturedImage(profile.avatar);
-    setPage('results');
+    navigate('/results');
   }
 
   async function deleteProfile(id) {
@@ -92,7 +108,6 @@ export default function App() {
 
   const sharedProps = {
     user,
-    setPage,
     setAuthMode,
     logout,
     profiles,
@@ -110,15 +125,38 @@ export default function App() {
   };
 
   return (
-    <div className="app-wrapper">
-      <canvas ref={canvasRef} style={{ display: 'none' }} />
-
-      {page === 'landing' && <LandingPage {...sharedProps} />}
-      {page === 'auth' && <AuthPage {...sharedProps} authMode={authMode} setAuthMode={setAuthMode} setUser={setUser} />}
-      {page === 'dashboard' && <DashboardPage {...sharedProps} />}
-      {page === 'scan' && <ScanPage {...sharedProps} />}
-      {page === 'analyzing' && <AnalyzingPage capturedImage={capturedImage} />}
-      {page === 'results' && <ResultsPage {...sharedProps} />}
-    </div>
+    <Router>
+      <div className="app-wrapper">
+        <canvas ref={canvasRef} style={{ display: 'none' }} />
+        
+        {isLoading ? (
+          <div className="loading-screen">
+            <div className="loading-spinner">✦</div>
+            <div className="loading-text">Beauty Kit</div>
+          </div>
+        ) : (
+          <Routes>
+            <Route path="/" element={<LandingPage {...sharedProps} />} />
+            <Route path="/auth" element={<AuthPage {...sharedProps} authMode={authMode} setAuthMode={setAuthMode} setUser={setUser} />} />
+            <Route 
+              path="/dashboard" 
+              element={<DashboardPage {...sharedProps} />} 
+            />
+            <Route 
+              path="/scan" 
+              element={user ? <ScanPage {...sharedProps} /> : <Navigate to="/auth" />} 
+            />
+            <Route 
+              path="/analyzing" 
+              element={user ? <AnalyzingPage capturedImage={capturedImage} /> : <Navigate to="/auth" />} 
+            />
+            <Route 
+              path="/results" 
+              element={user ? <ResultsPage {...sharedProps} /> : <Navigate to="/auth" />} 
+            />
+          </Routes>
+        )}
+      </div>
+    </Router>
   );
 }

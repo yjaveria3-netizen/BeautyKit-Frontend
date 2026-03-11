@@ -1,9 +1,11 @@
 import React, { useState, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import Ambient from '../components/Ambient';
 import ColorPicker from '../components/ColorPicker';
 import { apiFetch } from '../utils/api';
 
-export default function ScanPage({ user, setPage, setAuthMode, scanError, setScanError, analyzeImage, setCapturedImage, canvasRef, setResults }) {
+export default function ScanPage({ user, setAuthMode, scanError, setScanError, analyzeImage, setCapturedImage, canvasRef, setResults }) {
+  const navigate = useNavigate();
   const [scanMode, setScanMode] = useState('upload');
   const [stream, setStream] = useState(null);
   const [showColorPicker, setShowColorPicker] = useState(false);
@@ -71,7 +73,7 @@ export default function ScanPage({ user, setPage, setAuthMode, scanError, setSca
         recommendations: buildRecommendationsFromSkinTone(skinTone, color.hex)
       });
     }
-    setPage('results');
+    navigate('/results');
   }
 
   function buildRecommendationsFromSkinTone(skinTone, hex) {
@@ -343,15 +345,15 @@ export default function ScanPage({ user, setPage, setAuthMode, scanError, setSca
           {user ? (
             <>
               <span className="nav-user">✦ {user.name}</span>
-              <button className="btn-ghost small" onClick={() => setPage('dashboard')}>Dashboard</button>
+              <button className="btn-ghost small" onClick={() => navigate('/dashboard')}>Dashboard</button>
             </>
           ) : (
-            <button className="btn-ghost small" onClick={() => { setAuthMode('signin'); setPage('auth'); }}>Sign In</button>
+            <button className="btn-ghost small" onClick={() => { setAuthMode('signin'); navigate('/auth'); }}>Sign In</button>
           )}
         </div>
       </nav>
       <div className="scan-page">
-        <button className="back-btn" onClick={() => setPage(user ? 'dashboard' : 'landing')}>← Back</button>
+        <button className="back-btn" onClick={() => navigate(user ? '/dashboard' : '/')}>← Back</button>
         <h2 className="section-title">Scan Your Skin</h2>
         <p className="section-sub">Best results in natural daylight — aim your camera at your cheek or inner wrist.</p>
         {scanError && <div className="error-box">{scanError}</div>}

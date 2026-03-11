@@ -1,14 +1,17 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import Ambient from '../components/Ambient';
 import { apiFetch, setToken } from '../utils/api';
 import { calculatePasswordStrength } from '../utils/helpers';
 
-export default function AuthPage({ setPage, authMode, setAuthMode, setUser, loadProfiles }) {
+export default function AuthPage({ authMode, setAuthMode, setUser, loadProfiles }) {
+  const navigate = useNavigate();
   const [authForm, setAuthForm] = useState({ name: '', email: '', password: '' });
   const [authError, setAuthError] = useState('');
   const [authLoading, setAuthLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [passwordStrength, setPasswordStrength] = useState({ score: 0, label: '', color: '' });
+  const [rememberMe, setRememberMe] = useState(true); // Default to checked
 
   useEffect(() => {
     if (authMode === 'signup') {
@@ -26,10 +29,10 @@ export default function AuthPage({ setPage, authMode, setAuthMode, setUser, load
         ? { name: authForm.name, email: authForm.email, password: authForm.password }
         : { email: authForm.email, password: authForm.password };
       const data = await apiFetch(ep, { method: 'POST', body: JSON.stringify(body) });
-      setToken(data.token);
+      setToken(data.token, rememberMe);
       setUser(data.user);
       await loadProfiles();
-      setPage('dashboard');
+      navigate('/dashboard');
     } catch (err) {
       setAuthError(err.message);
     }
@@ -41,7 +44,7 @@ export default function AuthPage({ setPage, authMode, setAuthMode, setUser, load
       <Ambient />
       <div className="auth-page">
         <div className="auth-card">
-          <button className="back-btn" onClick={() => setPage('landing')}>← Back</button>
+          <button className="back-btn" onClick={() => navigate('/')}>← Back</button>
           <div className="auth-brand">Beauty Kit</div>
           <h2 className="auth-title">{authMode === 'signup' ? 'Create Account' : 'Welcome Back'}</h2>
           <p className="auth-sub">{authMode === 'signup' ? 'Start your beauty intelligence journey' : 'Sign in to your beauty profiles'}</p>
@@ -76,6 +79,17 @@ export default function AuthPage({ setPage, authMode, setAuthMode, setUser, load
                   {passwordStrength.label && <div className="strength-label" style={{ color: passwordStrength.color }}>{passwordStrength.label}</div>}
                 </div>
               )}
+            </div>
+            <div className="field remember-me-field">
+              <label className="checkbox-label">
+                <input 
+                  type="checkbox" 
+                  checked={rememberMe} 
+                  onChange={e => setRememberMe(e.target.checked)} 
+                />
+                <span className="checkmark"></span>
+                Remember me for 30 days
+              </label>
             </div>
             <button type="submit" className="btn-primary full" disabled={authLoading}>{authLoading ? 'Please wait...' : authMode === 'signup' ? 'Create Account' : 'Sign In'}</button>
           </form>
