@@ -1,396 +1,901 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Ambient from '../components/Ambient';
-import ColorPicker from '../components/ColorPicker';
 import { apiFetch } from '../utils/api';
+import { SKIN_TONES } from '../data/constants';
 
-export default function ScanPage({ user, setAuthMode, scanError, setScanError, analyzeImage, setCapturedImage, canvasRef, setResults }) {
+export default function ScanPage({ user, setAuthMode, analyzeImage, setCapturedImage, setResults }) {
   const navigate = useNavigate();
-  const [scanMode, setScanMode] = useState('upload');
+  const [scanMode, setScanMode] = useState('upload'); // 'upload' | 'camera' | 'manual'
   const [stream, setStream] = useState(null);
-  const [showColorPicker, setShowColorPicker] = useState(false);
   const [tempImage, setTempImage] = useState(null);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [skinPickStep, setSkinPickStep] = useState(null); // null | 'picking' | 'confirm'
+  const [pickedColor, setPickedColor] = useState(null);
+  const [pickedSkinTone, setPickedSkinTone] = useState(null);
+  const [scanError, setScanError] = useState('');
+  const [cameraError, setCameraError] = useState('');
+  const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef();
   const videoRef = useRef();
+  const photoCanvasRef = useRef();
+  const pickerCanvasRef = useRef();
+  const pickerImgRef = useRef();
 
+  // ── Camera helpers ──
+  async function startCamera() {
+    setCameraError('');
+    try {
+      const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } } });
+      setStream(s);
+      setScanMode('camera');
+      if (videoRef.current) videoRef.current.srcObject = s;
+    } catch (err) {
+      setCameraError('Camera access denied. Please allow camera permission and try again.');
+    }
+  }
+
+  function stopCamera() {
+    if (stream) { stream.getTracks().forEach(t => t.stop()); setStream(null); }
+    setScanMode('upload');
+  }
+
+  function capturePhoto() {
+    if (!videoRef.current) return;
+    const canvas = photoCanvasRef.current;
+    canvas.width = videoRef.current.videoWidth;
+    canvas.height = videoRef.current.videoHeight;
+    canvas.getContext('2d').drawImage(videoRef.current, 0, 0);
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
+    setTempImage(dataUrl);
+    stopCamera();
+    setSkinPickStep('picking');
+  }
+
+  // ── File upload helpers ──
   function handleFileUpload(e) {
     const file = e.target.files[0];
     if (!file) return;
+    loadFile(file);
+  }
+
+  function loadFile(file) {
+    if (!file.type.startsWith('image/')) { setScanError('Please upload an image file.'); return; }
+    setScanError('');
     const reader = new FileReader();
     reader.onload = ev => {
       setTempImage(ev.target.result);
-      setShowColorPicker(true);
+      setSkinPickStep('picking');
     };
     reader.readAsDataURL(file);
   }
 
-  async function handleColorSelect({ color, skinTone }) {
-    setShowColorPicker(false);
+  // ── Drag & Drop ──
+  function handleDrop(e) {
+    e.preventDefault();
+    setIsDragging(false);
+    const file = e.dataTransfer.files[0];
+    if (file) loadFile(file);
+  }
+
+  // ── Skin tone picker on canvas ──
+  const renderPickerCanvas = useCallback(() => {
+    if (!tempImage || !pickerCanvasRef.current || !pickerImgRef.current) return;
+    const img = pickerImgRef.current;
+    const canvas = pickerCanvasRef.current;
+    const maxW = Math.min(600, window.innerWidth - 48);
+    const ratio = img.naturalHeight / img.naturalWidth;
+    canvas.width = maxW;
+    canvas.height = maxW * ratio;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  }, [tempImage]);
+
+  useEffect(() => {
+    if (skinPickStep === 'picking' && tempImage) {
+      setTimeout(renderPickerCanvas, 100);
+    }
+  }, [skinPickStep, tempImage, renderPickerCanvas]);
+
+  function handleCanvasClick(e) {
+    if (!pickerCanvasRef.current) return;
+    const canvas = pickerCanvasRef.current;
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    const x = Math.floor((e.clientX - rect.left) * scaleX);
+    const y = Math.floor((e.clientY - rect.top) * scaleY);
+
+    const ctx = canvas.getContext('2d');
+    // Sample 7x7 area for average
+    const radius = 7;
+    const data = ctx.getImageData(Math.max(0, x - radius), Math.max(0, y - radius), radius * 2, radius * 2).data;
+    let r = 0, g = 0, b = 0, count = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      r += data[i]; g += data[i + 1]; b += data[i + 2]; count++;
+    }
+    r = Math.round(r / count); g = Math.round(g / count); b = Math.round(b / count);
+    const hex = `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+
+    const matched = matchSkinTone(r, g, b);
+    setPickedColor({ hex, r, g, b });
+    setPickedSkinTone(matched);
+    setSkinPickStep('confirm');
+  }
+
+  function matchSkinTone(r, g, b) {
+    let closest = SKIN_TONES[0], minDist = Infinity;
+    SKIN_TONES.forEach(t => {
+      const tr = parseInt(t.hex.slice(1, 3), 16);
+      const tg = parseInt(t.hex.slice(3, 5), 16);
+      const tb = parseInt(t.hex.slice(5, 7), 16);
+      const dist = (r - tr) ** 2 + (g - tg) ** 2 + (b - tb) ** 2;
+      if (dist < minDist) { minDist = dist; closest = t; }
+    });
+    return closest;
+  }
+
+  async function handleConfirmAndAnalyze() {
+    if (!pickedColor) return;
+    setIsAnalyzing(true);
+    setScanError('');
+
     setCapturedImage(tempImage);
-    
-    // Convert hex to RGB
-    const r = parseInt(color.hex.slice(1, 3), 16);
-    const g = parseInt(color.hex.slice(3, 5), 16);
-    const b = parseInt(color.hex.slice(5, 7), 16);
-    
+
     try {
-      // Call backend to get full recommendations
       const data = await apiFetch('/api/analyze-pixels', {
         method: 'POST',
-        body: JSON.stringify({ r, g, b })
+        body: JSON.stringify({ r: pickedColor.r, g: pickedColor.g, b: pickedColor.b })
       });
-      
-      // Merge backend response with detailed shades from constants
-      const detailedRecs = buildRecommendationsFromSkinTone(skinTone, color.hex);
-      
+
+      // Enrich with detailed shades from matched skin tone constants
+      const matched = pickedSkinTone;
       setResults({
         skinTone: {
           ...data.skinTone,
-          // Use the selected color hex instead of backend's calculated hex
-          hex: color.hex
+          hex: pickedColor.hex,
+          name: matched?.name || data.skinTone?.name,
+          undertone: matched?.undertone || data.skinTone?.undertone,
+          depth: matched?.depth || data.skinTone?.depth,
         },
         recommendations: {
           ...data.recommendations,
-          // Override with detailed shades from constants if available
-          lipstick: detailedRecs.lipstick,
-          blush: detailedRecs.blush,
-          eyeshadow: detailedRecs.eyeshadow,
+          lipstick: matched?.lipstick?.length ? matched.lipstick : data.recommendations?.lipstick,
+          blush: matched?.blush?.length ? matched.blush : data.recommendations?.blush,
+          eyeshadow: matched?.eyeshadow?.length ? matched.eyeshadow : data.recommendations?.eyeshadow,
           hair: {
-            ...data.recommendations.hair,
-            colors: detailedRecs.hair.colors
+            ...(data.recommendations?.hair || {}),
+            colors: matched?.hair?.length ? matched.hair : (data.recommendations?.hair?.colors || [])
           }
         }
       });
+      navigate('/results');
     } catch (err) {
-      // Fallback: build minimal results from skin tone
-      setResults({
-        skinTone: {
-          name: skinTone.name,
-          hex: color.hex,
-          undertone: skinTone.undertone,
-          depth: skinTone.depth
-        },
-        recommendations: buildRecommendationsFromSkinTone(skinTone, color.hex)
-      });
-    }
-    navigate('/results');
-  }
-
-  function buildRecommendationsFromSkinTone(skinTone, hex) {
-    const isWarm = skinTone.undertone === 'Warm';
-    const isCool = skinTone.undertone === 'Cool';
-    
-    // Extended lipstick shades (10+)
-    const getLipstickShades = () => {
-      const baseShades = skinTone.lipstick || [];
-      const warmShades = [
-        { name: 'Coral', hex: '#FF7F50', finish: 'Satin', vibe: 'Fresh' },
-        { name: 'Peach', hex: '#FFDAB9', finish: 'Cream', vibe: 'Natural' },
-        { name: 'Terracotta', hex: '#E2725B', finish: 'Matte', vibe: 'Earthy' },
-        { name: 'Spice', hex: '#D2691E', finish: 'Cream', vibe: 'Warm' },
-        { name: 'Cinnamon', hex: '#D2691E', finish: 'Gloss', vibe: 'Rich' },
-        { name: 'Burnt Orange', hex: '#CC5500', finish: 'Matte', vibe: 'Bold' },
-        { name: 'Pumpkin', hex: '#FF7518', finish: 'Satin', vibe: 'Vibrant' },
-        { name: 'Caramel', hex: '#C68E17', finish: 'Cream', vibe: 'Sweet' },
-        { name: 'Rust', hex: '#B7410E', finish: 'Matte', vibe: 'Statement' },
-        { name: 'Brick Red', hex: '#B22222', finish: 'Matte', vibe: 'Classic' },
-        { name: 'Copper', hex: '#B87333', finish: 'Metallic', vibe: 'Glam' },
-        { name: 'Toffee', hex: '#8B4513', finish: 'Cream', vibe: 'Warm' }
-      ];
-      const coolShades = [
-        { name: 'Berry', hex: '#8B0000', finish: 'Satin', vibe: 'Rich' },
-        { name: 'Rose', hex: '#C45C75', finish: 'Matte', vibe: 'Elegant' },
-        { name: 'Mauve', hex: '#B784A7', finish: 'Cream', vibe: 'Sophisticated' },
-        { name: 'Plum', hex: '#8B668B', finish: 'Gloss', vibe: 'Dramatic' },
-        { name: 'Fuchsia', hex: '#FF00FF', finish: 'Satin', vibe: 'Bold' },
-        { name: 'Raspberry', hex: '#E30B5D', finish: 'Cream', vibe: 'Playful' },
-        { name: 'Wine', hex: '#722F37', finish: 'Matte', vibe: 'Sophisticated' },
-        { name: 'Burgundy', hex: '#800020', finish: 'Cream', vibe: 'Deep' },
-        { name: 'Pink', hex: '#FFC0CB', finish: 'Gloss', vibe: 'Sweet' },
-        { name: 'Magenta', hex: '#FF00FF', finish: 'Matte', vibe: 'Vibrant' },
-        { name: 'Orchid', hex: '#DA70D6', finish: 'Satin', vibe: 'Elegant' },
-        { name: 'Lilac', hex: '#C8A2C8', finish: 'Cream', vibe: 'Soft' }
-      ];
-      const neutralShades = [
-        { name: 'Nude', hex: '#D2B48C', finish: 'Cream', vibe: 'Natural' },
-        { name: 'Dusty Rose', hex: '#DCAE96', finish: 'Matte', vibe: 'Subtle' },
-        { name: 'Rosewood', hex: '#C08081', finish: 'Satin', vibe: 'Elegant' },
-        { name: 'Soft Berry', hex: '#C71585', finish: 'Cream', vibe: 'Romantic' },
-        { name: 'Mauve Pink', hex: '#E0B0FF', finish: 'Gloss', vibe: 'Feminine' },
-        { name: 'Blush', hex: '#DE5D83', finish: 'Matte', vibe: 'Soft' },
-        { name: 'Nude Pink', hex: '#E6C2A6', finish: 'Cream', vibe: 'Everyday' },
-        { name: 'Soft Coral', hex: '#F88379', finish: 'Satin', vibe: 'Fresh' },
-        { name: 'Warm Pink', hex: '#F4A460', finish: 'Gloss', vibe: 'Friendly' },
-        { name: 'Taupe', hex: '#8B8589', finish: 'Matte', vibe: 'Neutral' }
-      ];
-      
-      let extendedShades = isWarm ? warmShades : isCool ? coolShades : neutralShades;
-      return [...baseShades, ...extendedShades].slice(0, 14);
-    };
-    
-    // Extended blush shades (10+)
-    const getBlushShades = () => {
-      const baseShades = skinTone.blush || [];
-      const warmBlush = [
-        { name: 'Apricot', hex: '#FBCEB1', finish: 'Powder' },
-        { name: 'Warm Peach', hex: '#FFDAB9', finish: 'Cream' },
-        { name: 'Coral', hex: '#FF7F50', finish: 'Liquid' },
-        { name: 'Tangerine', hex: '#FFA07A', finish: 'Powder' },
-        { name: 'Bronze', hex: '#CD7F32', finish: 'Cream' },
-        { name: 'Copper', hex: '#B87333', finish: 'Liquid' },
-        { name: 'Burnt Orange', hex: '#CC5500', finish: 'Powder' },
-        { name: 'Mango', hex: '#FF8243', finish: 'Cream' },
-        { name: 'Terracotta', hex: '#E2725B', finish: 'Powder' },
-        { name: 'Spice', hex: '#D2691E', finish: 'Liquid' },
-        { name: 'Golden Peach', hex: '#FFCBA4', finish: 'Cream' },
-        { name: 'Warm Sienna', hex: '#A0522D', finish: 'Powder' }
-      ];
-      const coolBlush = [
-        { name: 'Cool Pink', hex: '#FFB6C1', finish: 'Powder' },
-        { name: 'Soft Rose', hex: '#F4C2C2', finish: 'Cream' },
-        { name: 'Petal Pink', hex: '#F8C8DC', finish: 'Liquid' },
-        { name: 'Baby Pink', hex: '#F4C2C2', finish: 'Powder' },
-        { name: 'Berry', hex: '#8A2BE2', finish: 'Cream' },
-        { name: 'Plum', hex: '#8B668B', finish: 'Liquid' },
-        { name: 'Mauve', hex: '#B784A7', finish: 'Powder' },
-        { name: 'Orchid', hex: '#DA70D6', finish: 'Cream' },
-        { name: 'Lilac', hex: '#C8A2C8', finish: 'Powder' },
-        { name: 'Dusty Pink', hex: '#DCAE96', finish: 'Liquid' },
-        { name: 'Rose Pink', hex: '#FF66CC', finish: 'Cream' },
-        { name: 'Carnation', hex: '#FFA6C9', finish: 'Powder' }
-      ];
-      const neutralBlush = [
-        { name: 'Warm Rose', hex: '#F4A460', finish: 'Powder' },
-        { name: 'Soft Coral', hex: '#F88379', finish: 'Cream' },
-        { name: 'Peach Pink', hex: '#FFDAB9', finish: 'Liquid' },
-        { name: 'Dusty Rose', hex: '#DCAE96', finish: 'Powder' },
-        { name: 'Mauve', hex: '#B784A7', finish: 'Cream' },
-        { name: 'Nude Pink', hex: '#E6C2A6', finish: 'Powder' },
-        { name: 'Soft Berry', hex: '#C71585', finish: 'Liquid' },
-        { name: 'Rosewood', hex: '#C08081', finish: 'Cream' },
-        { name: 'Natural Flush', hex: '#DE5D83', finish: 'Powder' },
-        { name: 'Soft Peach', hex: '#FFE5B4', finish: 'Cream' }
-      ];
-      
-      let extendedShades = isWarm ? warmBlush : isCool ? coolBlush : neutralBlush;
-      return [...baseShades, ...extendedShades].slice(0, 14);
-    };
-    
-    // Extended eyeshadow shades (20+)
-    const getEyeshadowShades = () => {
-      const baseShades = skinTone.eyeshadow || [];
-      const warmShadows = [
-        { name: 'Gold', hex: '#FFD700' },
-        { name: 'Bronze', hex: '#CD7F32' },
-        { name: 'Copper', hex: '#B87333' },
-        { name: 'Warm Brown', hex: '#8B4513' },
-        { name: 'Terracotta', hex: '#E2725B' },
-        { name: 'Amber', hex: '#FFBF00' },
-        { name: 'Caramel', hex: '#B5651D' },
-        { name: 'Honey', hex: '#D4A574' },
-        { name: 'Olive', hex: '#808000' },
-        { name: 'Burnt Orange', hex: '#CC5500' },
-        { name: 'Champagne', hex: '#F7E7CE' },
-        { name: 'Topaz', hex: '#FFC87C' },
-        { name: 'Sienna', hex: '#A0522D' },
-        { name: 'Rust', hex: '#B7410E' },
-        { name: 'Mustard', hex: '#FFDB58' },
-        { name: 'Cinnamon', hex: '#D2691E' },
-        { name: 'Peach', hex: '#FFDAB9' },
-        { name: 'Apricot', hex: '#FBCEB1' },
-        { name: 'Tan', hex: '#D2B48C' },
-        { name: 'Camel', hex: '#C19A6B' },
-        { name: 'Mocha', hex: '#967969' },
-        { name: 'Espresso', hex: '#3D2314' }
-      ];
-      const coolShadows = [
-        { name: 'Silver', hex: '#C0C0C0' },
-        { name: 'Grey', hex: '#808080' },
-        { name: 'Taupe', hex: '#B8A090' },
-        { name: 'Cool Brown', hex: '#8B7355' },
-        { name: 'Plum', hex: '#8B668B' },
-        { name: 'Lavender', hex: '#E6E6FA' },
-        { name: 'Purple', hex: '#800080' },
-        { name: 'Navy', hex: '#000080' },
-        { name: 'Teal', hex: '#008080' },
-        { name: 'Slate', hex: '#708090' },
-        { name: 'Charcoal', hex: '#36454F' },
-        { name: 'Amethyst', hex: '#9966CC' },
-        { name: 'Periwinkle', hex: '#CCCCFF' },
-        { name: 'Blue Grey', hex: '#6699CC' },
-        { name: 'Steel Blue', hex: '#4682B4' },
-        { name: 'Royal Blue', hex: '#4169E1' },
-        { name: 'Indigo', hex: '#4B0082' },
-        { name: 'Violet', hex: '#8B00FF' },
-        { name: 'Orchid', hex: '#DA70D6' },
-        { name: 'Mauve', hex: '#B784A7' },
-        { name: 'Dusty Rose', hex: '#DCAE96' },
-        { name: 'Cool Champagne', hex: '#F7E7CE' }
-      ];
-      const neutralShadows = [
-        { name: 'Beige', hex: '#F5F5DC' },
-        { name: 'Sand', hex: '#C2B280' },
-        { name: 'Stone', hex: '#928E85' },
-        { name: 'Greige', hex: '#A89F91' },
-        { name: 'Mushroom', hex: '#B8A090' },
-        { name: 'Bronze', hex: '#CD7F32' },
-        { name: 'Pewter', hex: '#8A8A8A' },
-        { name: 'Rose Gold', hex: '#B76E79' },
-        { name: 'Champagne', hex: '#F7E7CE' },
-        { name: 'Soft Brown', hex: '#A0522D' },
-        { name: 'Warm Grey', hex: '#A0A0A0' },
-        { name: 'Khaki', hex: '#C3B091' },
-        { name: 'Olive', hex: '#808000' },
-        { name: 'Sage', hex: '#9DC183' },
-        { name: 'Cocoa', hex: '#D2691E' },
-        { name: 'Walnut', hex: '#5D4C3A' },
-        { name: 'Cream', hex: '#FFFDD0' },
-        { name: 'Ivory', hex: '#FFFFF0' },
-        { name: 'Soft Gold', hex: '#E6C288' },
-        { name: 'Antique Brass', hex: '#CD9575' }
-      ];
-      
-      let extendedShades = isWarm ? warmShadows : isCool ? coolShadows : neutralShadows;
-      return [...baseShades, ...extendedShades].slice(0, 24);
-    };
-    
-    // Extended hair colors (15+)
-    const getHairColors = () => {
-      const baseShades = skinTone.hair || [];
-      const allHairColors = [
-        { name: 'Platinum Blonde', hex: '#E5E5E5', level: 'Level 10' },
-        { name: 'Ash Blonde', hex: '#C4B9AC', level: 'Level 9' },
-        { name: 'Golden Blonde', hex: '#E6C288', level: 'Level 9' },
-        { name: 'Honey Blonde', hex: '#D4A574', level: 'Level 8' },
-        { name: 'Strawberry Blonde', hex: '#D4A574', level: 'Level 8' },
-        { name: 'Light Auburn', hex: '#B56557', level: 'Level 7' },
-        { name: 'Caramel', hex: '#B5651D', level: 'Level 6' },
-        { name: 'Golden Brown', hex: '#996515', level: 'Level 5' },
-        { name: 'Chestnut', hex: '#954535', level: 'Level 4' },
-        { name: 'Chocolate Brown', hex: '#5D4037', level: 'Level 4' },
-        { name: 'Auburn', hex: '#A52A2A', level: 'Level 5' },
-        { name: 'Copper', hex: '#B87333', level: 'Level 6' },
-        { name: 'Espresso', hex: '#3D2314', level: 'Level 2' },
-        { name: 'Dark Brown', hex: '#3D2314', level: 'Level 2' },
-        { name: 'Soft Black', hex: '#1C1C1C', level: 'Level 1' },
-        { name: 'Jet Black', hex: '#0A0A0A', level: 'Level 1' },
-        { name: 'Blue Black', hex: '#0D0D1A', level: 'Level 1' },
-        { name: 'Deep Auburn', hex: '#5D1916', level: 'Level 3' },
-        { name: 'Mahogany', hex: '#C04000', level: 'Level 4' },
-        { name: 'Burgundy', hex: '#800020', level: 'Level 4' }
-      ];
-      
-      return [...baseShades, ...allHairColors].slice(0, 18);
-    };
-    
-    return {
-      jewelry: {
-        metals: [
-          { name: isWarm ? 'Gold' : 'Silver', hex: isWarm ? '#FFD700' : '#C0C0C0', rating: 5, note: 'Best match for your undertone' },
-          { name: isWarm ? 'Rose Gold' : 'Platinum', hex: isWarm ? '#B76E79' : '#E5E4E2', rating: 4, note: 'Great alternative' },
-          { name: isWarm ? 'Copper' : 'White Gold', hex: isWarm ? '#B87333' : '#F5F5F5', rating: 4, note: 'Stylish choice' },
-          { name: 'Mixed Metals', hex: '#C0C0C0', rating: 3, note: 'Versatile option' }
-        ],
-        styles: ['Classic', 'Elegant', 'Modern', 'Statement'],
-        gemstones: skinTone.swatches || ['#FFD700', '#C0C0C0', '#B76E79', '#50C878'],
-        avoid: isWarm ? 'Silver tones' : 'Yellow gold'
-      },
-      clothing: {
-        colors: (skinTone.swatches || []).map((c, i) => ({ name: `Color ${i+1}`, hex: c, category: 'Best' })),
-        styles: ['Classic', 'Modern', 'Elegant', 'Casual'],
-        fabrics: ['Cotton', 'Silk', 'Linen', 'Cashmere'],
-        patterns: ['Solid', 'Subtle', 'Minimal', 'Textured'],
-        avoid: skinTone.avoidColors ? skinTone.avoidColors.split(', ') : []
-      },
-      lipstick: getLipstickShades(),
-      blush: getBlushShades(),
-      eyeshadow: getEyeshadowShades(),
-      hair: {
-        colors: getHairColors(),
-        styles: ['Natural', 'Soft waves', 'Sleek', 'Textured', 'Curly', 'Straight', 'Braided'],
-        treatments: ['Moisturizing', 'Color protect', 'Deep conditioning', 'Protein treatment', 'Keratin'],
-        avoid: 'Harsh bleaching'
+      // Graceful fallback using local skin tone data
+      if (pickedSkinTone) {
+        setResults({
+          skinTone: {
+            name: pickedSkinTone.name,
+            hex: pickedColor.hex,
+            undertone: pickedSkinTone.undertone,
+            depth: pickedSkinTone.depth,
+          },
+          recommendations: buildFallbackRecs(pickedSkinTone)
+        });
+        navigate('/results');
+      } else {
+        setScanError('Analysis failed. Please try again or check your connection.');
       }
+    }
+    setIsAnalyzing(false);
+  }
+
+  function buildFallbackRecs(tone) {
+    return {
+      lipstick: tone.lipstick || [],
+      blush: tone.blush || [],
+      eyeshadow: tone.eyeshadow || [],
+      hair: { colors: tone.hair || [], styles: [], treatments: [], avoid: '' },
+      jewelry: { metals: [], styles: [], gemstones: [], avoid: [] },
+      clothing: { colors: [], styles: [], fabrics: [], patterns: [], avoid: [] }
     };
   }
 
-  async function startCamera() {
-    try {
-      const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
-      setStream(s);
-      if (videoRef.current) videoRef.current.srcObject = s;
-    } catch {
-      setScanError('Camera access denied. Please use file upload.');
+  // Camera stream setup
+  useEffect(() => {
+    if (stream && videoRef.current) {
+      videoRef.current.srcObject = stream;
     }
+  }, [stream]);
+
+  useEffect(() => {
+    return () => { if (stream) stream.getTracks().forEach(t => t.stop()); };
+  }, [stream]);
+
+  // ── Render: Skin pick step ──
+  if (skinPickStep === 'picking') {
+    return (
+      <div className="scan-page">
+        <Ambient />
+        <div className="scan-inner">
+          <div className="scan-page-header">
+            <button className="back-btn" onClick={() => { setSkinPickStep(null); setTempImage(null); }}>← Back</button>
+            <div>
+              <h2 className="scan-step-title">Tap Your Bare Skin</h2>
+              <p className="scan-step-sub">Click on your cheek, forehead, or neck — any bare skin area works best. Avoid makeup-heavy zones.</p>
+            </div>
+          </div>
+
+          <div className="picker-canvas-wrap"
+            onClick={handleCanvasClick}
+            style={{ cursor: 'crosshair' }}>
+            <img
+              ref={pickerImgRef}
+              src={tempImage}
+              alt="Your photo"
+              style={{ display: 'none' }}
+              onLoad={renderPickerCanvas}
+            />
+            <canvas ref={pickerCanvasRef} className="picker-canvas" />
+            <div className="picker-hint-overlay">
+              <div className="picker-crosshair">⊕</div>
+              <span>Tap bare skin to detect your tone</span>
+            </div>
+          </div>
+
+          <div className="picker-tips">
+            <div className="tip-item"><span className="tip-icon">✓</span><span>Tap cheek, forehead, or jawline</span></div>
+            <div className="tip-item"><span className="tip-icon">✗</span><span>Avoid eyebrows, lips, or shadowed areas</span></div>
+            <div className="tip-item"><span className="tip-icon">💡</span><span>Good lighting gives best results</span></div>
+          </div>
+
+          <div style={{ textAlign: 'center', marginTop: '1rem' }}>
+            <button className="btn-ghost" onClick={() => { setSkinPickStep('confirm'); setPickedColor({ hex: '#c4916c', r: 196, g: 145, b: 108 }); setPickedSkinTone(SKIN_TONES.find(t => t.id === 'natural_beige') || SKIN_TONES[3]); }}>
+              Skip — use detected color
+            </button>
+          </div>
+        </div>
+
+        <ScanPageStyles />
+      </div>
+    );
   }
 
-  function capturePhoto() {
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
-    canvas.width = videoRef.current.videoWidth;
-    canvas.height = videoRef.current.videoHeight;
-    ctx.drawImage(videoRef.current, 0, 0);
-    const imgData = canvas.toDataURL('image/jpeg');
-    setCapturedImage(imgData);
-    if (stream) stream.getTracks().forEach(t => t.stop());
-    analyzeImage(imgData);
+  // ── Render: Confirm step ──
+  if (skinPickStep === 'confirm' && pickedColor) {
+    return (
+      <div className="scan-page">
+        <Ambient />
+        <div className="scan-inner">
+          <div className="scan-page-header">
+            <button className="back-btn" onClick={() => setSkinPickStep('picking')}>← Repick</button>
+            <div>
+              <h2 className="scan-step-title">Confirm Your Skin Tone</h2>
+              <p className="scan-step-sub">We've matched your skin to our database. You can adjust below or continue to your results.</p>
+            </div>
+          </div>
+
+          {/* Color confirmation card */}
+          <div className="tone-confirm-card">
+            <div className="tone-confirm-swatch" style={{ background: pickedColor.hex }} />
+            <div className="tone-confirm-info">
+              <div className="tone-confirm-hex">{pickedColor.hex.toUpperCase()}</div>
+              <div className="tone-confirm-rgb">RGB({pickedColor.r}, {pickedColor.g}, {pickedColor.b})</div>
+              {pickedSkinTone && (
+                <div className="tone-confirm-match">
+                  <div className="tone-match-swatch" style={{ background: pickedSkinTone.hex }} />
+                  <div>
+                    <div className="tone-match-name">→ {pickedSkinTone.name}</div>
+                    <div className="tone-match-meta">{pickedSkinTone.undertone} · {pickedSkinTone.depth}</div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Manual override: pick from SKIN_TONES list */}
+          <div className="tone-override-section">
+            <div className="tone-override-label">Not right? Tap to select manually:</div>
+            <div className="tone-override-grid">
+              {SKIN_TONES.map(t => (
+                <div
+                  key={t.id}
+                  className={`tone-override-item ${pickedSkinTone?.id === t.id ? 'selected' : ''}`}
+                  onClick={() => {
+                    setPickedSkinTone(t);
+                    setPickedColor({ hex: t.hex, r: parseInt(t.hex.slice(1,3),16), g: parseInt(t.hex.slice(3,5),16), b: parseInt(t.hex.slice(5,7),16) });
+                  }}
+                  title={t.name}
+                >
+                  <div className="tone-override-swatch" style={{ background: t.hex }} />
+                  <div className="tone-override-name">{t.name}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {scanError && (
+            <div className="scan-error-msg">⚠ {scanError}</div>
+          )}
+
+          <button
+            className="btn-primary full scan-analyze-btn"
+            onClick={handleConfirmAndAnalyze}
+            disabled={isAnalyzing}
+          >
+            {isAnalyzing ? (
+              <span className="scan-loading"><span className="scan-spinner" /> Analyzing your skin…</span>
+            ) : (
+              'Get My Beauty Recommendations →'
+            )}
+          </button>
+        </div>
+
+        <ScanPageStyles />
+      </div>
+    );
   }
 
+  // ── Render: Main scan page ──
   return (
-    <div className="app">
+    <div className="scan-page">
       <Ambient />
-      <nav className="nav">
-        <span className="nav-brand">Beauty Kit</span>
-        <div className="nav-actions">
-          {user ? (
-            <>
-              <span className="nav-user">✦ {user.name}</span>
-              <button className="btn-ghost small" onClick={() => navigate('/dashboard')}>Dashboard</button>
-            </>
-          ) : (
-            <button className="btn-ghost small" onClick={() => { setAuthMode('signin'); navigate('/auth'); }}>Sign In</button>
+
+      <div className="scan-inner">
+        {/* Header */}
+        <div className="scan-top-bar">
+          <button className="back-btn" onClick={() => navigate(user ? '/dashboard' : '/')}>
+            ← {user ? 'Dashboard' : 'Home'}
+          </button>
+          <span className="nav-brand">Beauty Kit</span>
+          {!user && (
+            <button className="btn-outline small" onClick={() => navigate('/auth')}>Sign In</button>
           )}
         </div>
-      </nav>
-      <div className="scan-page">
-        <button className="back-btn" onClick={() => navigate(user ? '/dashboard' : '/')}>← Back</button>
-        <h2 className="section-title">Scan Your Skin</h2>
-        <p className="section-sub">Best results in natural daylight — aim your camera at your cheek or inner wrist.</p>
-        {scanError && <div className="error-box">{scanError}</div>}
-        <div className="scan-modes">
-          <button className={`mode-btn ${scanMode === 'upload' ? 'active' : ''}`} onClick={() => setScanMode('upload')}>Upload Photo</button>
-          <button className={`mode-btn ${scanMode === 'camera' ? 'active' : ''}`} onClick={() => { setScanMode('camera'); startCamera(); }}>Live Camera</button>
+
+        <div className="scan-hero">
+          <span className="section-eyebrow">Step 1 of 2</span>
+          <h1 className="scan-title">Scan Your Skin Tone</h1>
+          <p className="scan-subtitle">
+            Upload a clear photo of your face in natural light, or use your camera. We'll detect your undertone, depth, and give you personalised beauty recommendations.
+          </p>
         </div>
-        {scanMode === 'upload' && (
-          <div className="upload-zone" onClick={() => fileInputRef.current.click()}>
-            <div className="upload-icon">⊕</div>
-            <p className="upload-text">Click to upload your photo</p>
-            <p className="upload-hint">JPG · PNG · WEBP  •  Natural light recommended</p>
-            <input ref={fileInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleFileUpload} />
-          </div>
+
+        {/* Mode tabs */}
+        <div className="scan-mode-tabs">
+          <button
+            className={`scan-mode-tab ${scanMode !== 'camera' ? 'active' : ''}`}
+            onClick={() => { stopCamera(); setScanMode('upload'); }}
+          >
+            📁 Upload Photo
+          </button>
+          <button
+            className={`scan-mode-tab ${scanMode === 'camera' ? 'active' : ''}`}
+            onClick={startCamera}
+          >
+            📷 Use Camera
+          </button>
+        </div>
+
+        {cameraError && (
+          <div className="scan-error-msg">{cameraError}</div>
         )}
+
+        {scanError && (
+          <div className="scan-error-msg">{scanError}</div>
+        )}
+
+        {/* Camera mode */}
         {scanMode === 'camera' && (
-          <div className="camera-zone">
-            <div className="video-wrap">
-              <video ref={videoRef} autoPlay playsInline className="camera-feed" />
-              <div className="face-guide" />
+          <div className="camera-section">
+            <div className="camera-frame">
+              <video ref={videoRef} autoPlay playsInline muted className="camera-video" />
+              <div className="camera-face-guide">
+                <div className="face-oval" />
+                <span className="face-guide-text">Align your face here</span>
+              </div>
             </div>
-            <button className="capture-btn" onClick={capturePhoto}><span className="capture-inner" /></button>
-            <p className="upload-hint">Align your face and tap the button</p>
+            <canvas ref={photoCanvasRef} style={{ display: 'none' }} />
+            <div className="camera-controls">
+              <button className="btn-ghost" onClick={stopCamera}>Cancel</button>
+              <button className="cta-pill" onClick={capturePhoto}>
+                <span>📸</span><span>Take Photo</span>
+              </button>
+            </div>
           </div>
         )}
 
-        {showColorPicker && tempImage && (
-          <ColorPicker
-            imageSrc={tempImage}
-            onColorSelect={handleColorSelect}
-            onCancel={() => {
-              setShowColorPicker(false);
-              setTempImage(null);
-            }}
-          />
+        {/* Upload mode */}
+        {scanMode !== 'camera' && (
+          <>
+            <div
+              className={`scan-dropzone ${isDragging ? 'dragging' : ''}`}
+              onClick={() => fileInputRef.current?.click()}
+              onDragOver={e => { e.preventDefault(); setIsDragging(true); }}
+              onDragLeave={() => setIsDragging(false)}
+              onDrop={handleDrop}
+            >
+              <div className="dropzone-inner">
+                <div className="dropzone-icon">🖼</div>
+                <div className="dropzone-title">Drop your photo here</div>
+                <div className="dropzone-sub">or click to browse · JPG, PNG, WEBP</div>
+                <button className="cta-pill" onClick={e => { e.stopPropagation(); fileInputRef.current?.click(); }}>
+                  <span>Upload Photo</span>
+                  <span className="cta-arrow">→</span>
+                </button>
+              </div>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                style={{ display: 'none' }}
+                onChange={handleFileUpload}
+              />
+            </div>
+
+            {/* Tips */}
+            <div className="scan-tips-row">
+              {[
+                { icon: '☀️', tip: 'Natural lighting works best' },
+                { icon: '😊', tip: 'Face forward, no heavy makeup' },
+                { icon: '🔍', tip: 'Clear, close-up face photo' },
+              ].map((t, i) => (
+                <div key={i} className="scan-tip-card">
+                  <span className="scan-tip-icon">{t.icon}</span>
+                  <span className="scan-tip-text">{t.tip}</span>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+
+        {/* How it works */}
+        <div className="scan-how-row">
+          {[
+            { step: '1', label: 'Upload Photo', desc: 'Any clear face photo' },
+            { step: '2', label: 'Tap Skin', desc: 'Click on bare skin area' },
+            { step: '3', label: 'Get Results', desc: 'Personalised beauty picks' },
+          ].map(s => (
+            <div key={s.step} className="scan-how-step">
+              <div className="scan-how-num">{s.step}</div>
+              <div className="scan-how-label">{s.label}</div>
+              <div className="scan-how-desc">{s.desc}</div>
+            </div>
+          ))}
+        </div>
+
+        {!user && (
+          <div className="scan-auth-nudge">
+            <span>💾 <strong>Sign in</strong> to save your results and beauty profiles</span>
+            <button className="btn-ghost small" onClick={() => navigate('/auth')}>Create free account →</button>
+          </div>
         )}
       </div>
+
+      <ScanPageStyles />
     </div>
+  );
+}
+
+function ScanPageStyles() {
+  return (
+    <style>{`
+      .scan-page {
+        min-height: 100vh;
+        position: relative;
+        display: flex;
+        align-items: flex-start;
+        justify-content: center;
+        padding: 2rem 1.25rem 4rem;
+        box-sizing: border-box;
+      }
+
+      .scan-inner {
+        position: relative;
+        z-index: 2;
+        width: 100%;
+        max-width: 680px;
+        display: flex;
+        flex-direction: column;
+        gap: 1.5rem;
+      }
+
+      .scan-top-bar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+      }
+
+      .scan-hero {
+        text-align: center;
+        padding: 0 1rem;
+      }
+
+      .scan-title {
+        font-family: var(--serif, Georgia, serif);
+        font-size: clamp(2rem, 5vw, 2.8rem);
+        font-weight: 400;
+        margin: 0.5rem 0 0.75rem;
+        background: linear-gradient(135deg, var(--gold-light, #e8d080), var(--rose-light, #e8a0c0));
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        line-height: 1.2;
+      }
+
+      .scan-subtitle {
+        color: var(--text-muted, #888);
+        font-size: 0.9rem;
+        line-height: 1.65;
+        max-width: 520px;
+        margin: 0 auto;
+      }
+
+      .scan-mode-tabs {
+        display: flex;
+        gap: 0.5rem;
+        justify-content: center;
+      }
+
+      .scan-mode-tab {
+        padding: 0.6rem 1.4rem;
+        background: rgba(255,255,255,0.04);
+        border: 1px solid rgba(65,105,225,0.2);
+        border-radius: 100px;
+        font-family: var(--sans, system-ui, sans-serif);
+        font-size: 0.8rem;
+        color: var(--text-muted, #888);
+        cursor: pointer;
+        transition: all 0.25s ease;
+      }
+
+      .scan-mode-tab.active {
+        background: rgba(65,105,225,0.15);
+        border-color: rgba(65,105,225,0.45);
+        color: var(--gold-light, #e8d080);
+      }
+
+      .scan-dropzone {
+        border: 2px dashed rgba(65,105,225,0.3);
+        border-radius: 20px;
+        padding: 3rem 2rem;
+        text-align: center;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        background: rgba(65,105,225,0.04);
+      }
+
+      .scan-dropzone:hover, .scan-dropzone.dragging {
+        border-color: rgba(65,105,225,0.6);
+        background: rgba(65,105,225,0.08);
+      }
+
+      .dropzone-inner {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 0.75rem;
+      }
+
+      .dropzone-icon { font-size: 3rem; line-height: 1; }
+      .dropzone-title { font-family: var(--serif, Georgia, serif); font-size: 1.25rem; color: var(--text, #fff); }
+      .dropzone-sub { font-size: 0.8rem; color: var(--text-dim, #666); }
+
+      .scan-tips-row {
+        display: flex;
+        gap: 0.75rem;
+        flex-wrap: wrap;
+        justify-content: center;
+      }
+
+      .scan-tip-card {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.6rem 1rem;
+        background: rgba(255,255,255,0.03);
+        border: 1px solid rgba(255,255,255,0.07);
+        border-radius: 100px;
+        font-size: 0.78rem;
+        color: var(--text-muted, #888);
+      }
+
+      .scan-tip-icon { font-size: 1rem; }
+
+      /* Camera */
+      .camera-section {
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+        align-items: center;
+      }
+
+      .camera-frame {
+        position: relative;
+        width: 100%;
+        max-width: 480px;
+        border-radius: 16px;
+        overflow: hidden;
+        border: 2px solid rgba(65,105,225,0.3);
+      }
+
+      .camera-video { width: 100%; display: block; }
+
+      .camera-face-guide {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        pointer-events: none;
+      }
+
+      .face-oval {
+        width: 160px;
+        height: 200px;
+        border: 2px dashed rgba(200,170,80,0.6);
+        border-radius: 50%;
+        box-shadow: 0 0 0 3000px rgba(0,0,0,0.25);
+      }
+
+      .face-guide-text {
+        margin-top: 1rem;
+        font-size: 0.75rem;
+        color: rgba(200,170,80,0.8);
+        text-shadow: 0 1px 4px rgba(0,0,0,0.8);
+        letter-spacing: 0.05em;
+      }
+
+      .camera-controls {
+        display: flex;
+        gap: 1rem;
+        align-items: center;
+      }
+
+      /* Picker canvas */
+      .scan-page-header {
+        display: flex;
+        align-items: flex-start;
+        gap: 1rem;
+      }
+
+      .scan-step-title {
+        font-family: var(--serif, Georgia, serif);
+        font-size: 1.5rem;
+        font-weight: 400;
+        margin: 0 0 0.3rem;
+        color: var(--text, #fff);
+      }
+
+      .scan-step-sub {
+        font-size: 0.82rem;
+        color: var(--text-muted, #888);
+        line-height: 1.5;
+        margin: 0;
+      }
+
+      .picker-canvas-wrap {
+        position: relative;
+        border-radius: 16px;
+        overflow: hidden;
+        border: 2px solid rgba(65,105,225,0.3);
+        box-shadow: 0 20px 40px rgba(0,0,0,0.4);
+      }
+
+      .picker-canvas { display: block; width: 100%; height: auto; }
+
+      .picker-hint-overlay {
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        background: linear-gradient(transparent, rgba(0,0,0,0.7));
+        padding: 1.5rem 1rem 0.75rem;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.5rem;
+        font-size: 0.78rem;
+        color: rgba(255,255,255,0.8);
+        pointer-events: none;
+      }
+
+      .picker-crosshair { font-size: 1.2rem; color: var(--gold, #c4a84a); }
+
+      .picker-tips {
+        display: flex;
+        flex-direction: column;
+        gap: 0.4rem;
+      }
+
+      .tip-item {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        font-size: 0.8rem;
+        color: var(--text-muted, #888);
+      }
+
+      .tip-icon { width: 1.2rem; text-align: center; font-size: 0.85rem; }
+
+      /* Confirm step */
+      .tone-confirm-card {
+        display: flex;
+        align-items: center;
+        gap: 1.5rem;
+        padding: 1.5rem;
+        background: rgba(255,255,255,0.04);
+        border: 1px solid rgba(65,105,225,0.2);
+        border-radius: 16px;
+      }
+
+      .tone-confirm-swatch {
+        width: 80px;
+        height: 80px;
+        border-radius: 50%;
+        border: 3px solid rgba(255,255,255,0.15);
+        box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+        flex-shrink: 0;
+      }
+
+      .tone-confirm-hex {
+        font-family: monospace;
+        font-size: 1.1rem;
+        color: var(--gold-light, #e8d080);
+        letter-spacing: 1px;
+      }
+
+      .tone-confirm-rgb { font-size: 0.78rem; color: var(--text-dim, #666); margin: 0.2rem 0 0.6rem; }
+
+      .tone-confirm-match {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+      }
+
+      .tone-match-swatch {
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        border: 2px solid rgba(255,255,255,0.15);
+      }
+
+      .tone-match-name { font-size: 0.88rem; color: var(--text, #fff); font-weight: 500; }
+      .tone-match-meta { font-size: 0.72rem; color: var(--text-muted, #888); }
+
+      .tone-override-section { display: flex; flex-direction: column; gap: 0.75rem; }
+      .tone-override-label { font-size: 0.75rem; color: var(--text-dim, #666); letter-spacing: 0.05em; }
+
+      .tone-override-grid {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+      }
+
+      .tone-override-item {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 0.3rem;
+        padding: 0.5rem;
+        border-radius: 10px;
+        border: 1px solid rgba(255,255,255,0.06);
+        cursor: pointer;
+        transition: all 0.2s;
+        width: calc(25% - 0.4rem);
+        min-width: 70px;
+        box-sizing: border-box;
+      }
+
+      .tone-override-item:hover { border-color: rgba(65,105,225,0.4); background: rgba(65,105,225,0.06); }
+      .tone-override-item.selected { border-color: var(--gold, #c4a84a); background: rgba(200,170,80,0.08); }
+
+      .tone-override-swatch {
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        border: 2px solid rgba(255,255,255,0.12);
+      }
+
+      .tone-override-name { font-size: 0.6rem; color: var(--text-muted, #888); text-align: center; line-height: 1.2; }
+
+      .scan-error-msg {
+        padding: 0.75rem 1rem;
+        background: rgba(200,50,50,0.1);
+        border: 1px solid rgba(200,50,50,0.3);
+        border-radius: 10px;
+        font-size: 0.82rem;
+        color: #ff9090;
+      }
+
+      .scan-analyze-btn {
+        padding: 1rem;
+        font-size: 0.9rem;
+        border-radius: 14px;
+        letter-spacing: 0.05em;
+      }
+
+      .scan-loading {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.6rem;
+      }
+
+      .scan-spinner {
+        width: 16px;
+        height: 16px;
+        border: 2px solid rgba(10,10,20,0.3);
+        border-top-color: #0a0a14;
+        border-radius: 50%;
+        animation: scan-spin 0.8s linear infinite;
+        flex-shrink: 0;
+      }
+
+      @keyframes scan-spin { to { transform: rotate(360deg); } }
+
+      .scan-how-row {
+        display: flex;
+        gap: 1rem;
+        justify-content: center;
+      }
+
+      .scan-how-step {
+        flex: 1;
+        text-align: center;
+        padding: 1.25rem 0.75rem;
+        background: rgba(255,255,255,0.025);
+        border: 1px solid rgba(255,255,255,0.06);
+        border-radius: 14px;
+        max-width: 200px;
+      }
+
+      .scan-how-num {
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        border: 1px solid rgba(65,105,225,0.4);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.8rem;
+        color: var(--gold, #c4a84a);
+        margin: 0 auto 0.5rem;
+      }
+
+      .scan-how-label {
+        font-size: 0.82rem;
+        font-weight: 500;
+        color: var(--text, #fff);
+        margin-bottom: 0.25rem;
+      }
+
+      .scan-how-desc { font-size: 0.72rem; color: var(--text-dim, #666); }
+
+      .scan-auth-nudge {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        padding: 1rem 1.25rem;
+        background: rgba(65,105,225,0.06);
+        border: 1px solid rgba(65,105,225,0.15);
+        border-radius: 12px;
+        font-size: 0.82rem;
+        color: var(--text-muted, #888);
+        flex-wrap: wrap;
+      }
+
+      @media (max-width: 560px) {
+        .scan-tips-row { gap: 0.5rem; }
+        .scan-tip-card { font-size: 0.72rem; padding: 0.5rem 0.75rem; }
+        .scan-how-row { gap: 0.5rem; }
+        .scan-how-step { padding: 1rem 0.5rem; }
+        .tone-override-item { width: calc(33.33% - 0.35rem); }
+        .scan-page-header { flex-direction: column; }
+      }
+    `}</style>
   );
 }

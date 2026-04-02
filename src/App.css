@@ -2543,7 +2543,7 @@ body {
 }
 
 .section-sub {
-  color: var(--roose);
+  color: var(--text-muted);
   font-size: 0.9rem;
   line-height: 1.7;
   text-align: center;

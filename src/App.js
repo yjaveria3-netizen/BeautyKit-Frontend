@@ -144,15 +144,15 @@ export default function App() {
             />
             <Route 
               path="/scan" 
-              element={user ? <ScanPage {...sharedProps} /> : <Navigate to="/auth" />} 
+              element={<ScanPage {...sharedProps} />} 
             />
             <Route 
               path="/analyzing" 
-              element={user ? <AnalyzingPage capturedImage={capturedImage} /> : <Navigate to="/auth" />} 
+              element={<AnalyzingPage capturedImage={capturedImage} />} 
             />
             <Route 
               path="/results" 
-              element={user ? <ResultsPage {...sharedProps} /> : <Navigate to="/auth" />} 
+              element={<ResultsPage {...sharedProps} />} 
             />
           </Routes>
         )}
